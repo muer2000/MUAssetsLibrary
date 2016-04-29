@@ -16,9 +16,6 @@ NSString * const ALAAssetURLScheme = @"assets-library";
 
 @interface MUAsset ()
 
-+ (instancetype)p_assetWithPHAsset:(PHAsset *)phAsset;
-+ (instancetype)p_assetWithALAsset:(ALAsset *)alAsset;
-
 @property (nonatomic, strong) id realAsset;
 
 @property (nonatomic, copy) NSString *localIdentifier;
@@ -130,8 +127,17 @@ NSString * const ALAAssetURLScheme = @"assets-library";
     return 0;
 }
 
+@end
 
-#pragma mark - Private
+
+@interface MUAsset (MUPrivate)
+
++ (instancetype)p_assetWithPHAsset:(PHAsset *)phAsset;
++ (instancetype)p_assetWithALAsset:(ALAsset *)alAsset;
+
+@end
+
+@implementation MUAsset (MUPrivate)
 
 + (instancetype)p_assetWithPHAsset:(PHAsset *)phAsset
 {
@@ -145,21 +151,17 @@ NSString * const ALAAssetURLScheme = @"assets-library";
 {
     MUAsset *asset = [[MUAsset alloc] init];
     asset.realAsset = alAsset;
-    asset.mediaType = [self p_muAssetMediaTypeWithALAsset:alAsset];
+    id typeValue = [alAsset valueForProperty:ALAssetPropertyType];
+    if ([typeValue isEqualToString:ALAssetTypePhoto]) {
+        asset.mediaType = MUAssetMediaTypeImage;
+    }
+    else if ([typeValue isEqualToString:ALAssetTypeVideo]) {
+        asset.mediaType = MUAssetMediaTypeVideo;
+    }
+    else {
+        asset.mediaType = MUAssetMediaTypeUnknown;
+    }
     return asset;
-}
-
-+ (MUAssetMediaType)p_muAssetMediaTypeWithALAsset:(ALAsset *)alAsset
-{
-    id type = [alAsset valueForProperty:ALAssetPropertyType];
-    if ([type isEqualToString:ALAssetTypePhoto]) {
-        return MUAssetMediaTypeImage;
-    }
-    
-    if ([type isEqualToString:ALAssetTypeVideo]) {
-        return MUAssetMediaTypeVideo;
-    }
-    return MUAssetMediaTypeUnknown;
 }
 
 @end

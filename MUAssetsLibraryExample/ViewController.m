@@ -14,6 +14,7 @@
 @interface ViewController ()
 
 @property (nonatomic, strong) NSArray *albums;
+@property (nonatomic, strong) MUAssetsLibrary *assetsLibrary;
 
 @end
 
@@ -21,13 +22,14 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.tableView.rowHeight = 50.0;
     [[MUAssetsLibrary sharedLibrary] requestAssetCollectionsWithMediaType:MUAssetMediaTypeAny completionHandler:^(NSArray<MUAssetCollection *> *assetCollections, NSError *error) {
         if (assetCollections) {
             self.albums = assetCollections;
             [self.tableView reloadData];
         }
     }];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(assetsLibraryChangedNotification:) name:MUAssetsLibraryChangedNotification object:nil];
 }
 
 - (void)prepareForSegue:(UIStoryboardSegue *)segue sender:(id)sender
@@ -35,6 +37,14 @@
     MUAssetsViewController *assetsViewController = segue.destinationViewController;
     assetsViewController.assetsLibrary = [MUAssetsLibrary sharedLibrary];
     assetsViewController.assetCollection = self.albums[self.tableView.indexPathForSelectedRow.row];
+}
+
+- (void)assetsLibraryChangedNotification:(NSNotification *)sender
+{
+    NSLog(@"*** changed ***");
+    for (MUAssetCollection *assetCollection in self.albums) {
+        NSLog(@"title:%@, %zd, %zd", assetCollection.title, assetCollection.numberOfAssets, [assetCollection.realAssetCollection numberOfAssets]);
+    }
 }
 
 

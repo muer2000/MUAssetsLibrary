@@ -9,6 +9,7 @@
 #import "MUAssetsViewController.h"
 #import "MUAssetsLibrary.h"
 #import "MUAssetCell.h"
+#import "MUAssetImageManager.h"
 
 static const NSUInteger kColumnNum = 4;
 
@@ -16,8 +17,8 @@ static const NSUInteger kColumnNum = 4;
 
 @interface MUAssetsViewController ()
 
-@property (nonatomic, strong) MUAssetFetchResult *assetFetchResult;
 @property (nonatomic, assign) CGRect previousPreheatRect;
+@property (nonatomic, strong) NSDictionary *metadataInfo;
 
 @end
 
@@ -27,19 +28,21 @@ static NSString * const reuseIdentifier = @"AssetCell";
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+
+    self.title = self.assetCollection.title;
     [self resetCachedAssets];
-    self.assetFetchResult = [MUAssetFetchResult resultWithAssetCollection:self.assetCollection];
 }
 
 - (MUAsset *)assetForIndexPath:(NSIndexPath *)indexPath
 {
-    return self.assetFetchResult[indexPath.item];
+    return self.assetCollection.fetchResult[indexPath.item];
 }
 
+   
 #pragma mark - UICollectionViewDataSource
 
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section {
-    return self.assetFetchResult.count;
+    return self.assetCollection.fetchResult.count;
 }
 
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath {
@@ -47,7 +50,7 @@ static NSString * const reuseIdentifier = @"AssetCell";
     MUAssetCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:reuseIdentifier forIndexPath:indexPath];
     NSInteger tag = indexPath.item;
     cell.tag = tag;
-    [self.assetsLibrary requestThumbnailForAsset:asset resultHandler:^(UIImage *image, NSDictionary *info) {
+    [MUAssetImageManager requestThumbnailForAsset:asset resultHandler:^(UIImage *image, NSDictionary *info) {
         if (cell.tag == tag) {
             if (cell.imageView.image != image) {
                 cell.imageView.image = image;
@@ -83,7 +86,7 @@ static NSString * const reuseIdentifier = @"AssetCell";
     if (kIsiOS8) {
         return;
     }
-    [self.assetsLibrary stopCachingImagesForAllAssets];
+    [MUAssetImageManager stopCachingImagesForAllAssets];
     self.previousPreheatRect = CGRectZero;
 }
 
@@ -112,9 +115,8 @@ static NSString * const reuseIdentifier = @"AssetCell";
         }];
         NSArray *assetsToStartCaching = [self assetsAtIndexPaths:addedIndexPaths];
         NSArray *assetsToStopCaching = [self assetsAtIndexPaths:removedIndexPaths];
-        [self.assetsLibrary startCachingThumbnailForAssets:assetsToStartCaching];
-        [self.assetsLibrary stopCachingThumbnailForAssets:assetsToStopCaching];
-        
+        [MUAssetImageManager startCachingThumbnailForAssets:assetsToStartCaching];
+        [MUAssetImageManager stopCachingThumbnailForAssets:assetsToStopCaching];
         self.previousPreheatRect = preheatRect;
     }
 }

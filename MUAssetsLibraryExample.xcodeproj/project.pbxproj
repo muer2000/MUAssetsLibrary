@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		16438F261CC8EAEF00C23068 /* MUAssetImageManager.m in Sources */ = {isa = PBXBuildFile; fileRef = 16438F251CC8EAEF00C23068 /* MUAssetImageManager.m */; };
 		169E84501CBE26E70081FF5F /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 169E844F1CBE26E70081FF5F /* main.m */; };
 		169E84531CBE26E70081FF5F /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = 169E84521CBE26E70081FF5F /* AppDelegate.m */; };
 		169E84561CBE26E70081FF5F /* ViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 169E84551CBE26E70081FF5F /* ViewController.m */; };
@@ -23,6 +24,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		16438F241CC8EAEF00C23068 /* MUAssetImageManager.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = MUAssetImageManager.h; sourceTree = "<group>"; };
+		16438F251CC8EAEF00C23068 /* MUAssetImageManager.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = MUAssetImageManager.m; sourceTree = "<group>"; };
 		169E844B1CBE26E70081FF5F /* MUAssetsLibraryExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MUAssetsLibraryExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		169E844F1CBE26E70081FF5F /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		169E84511CBE26E70081FF5F /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
@@ -118,6 +121,8 @@
 				169E846B1CBE280F0081FF5F /* MUAssetFetchResult.m */,
 				169E846C1CBE280F0081FF5F /* MUAssetsLibrary.h */,
 				169E846D1CBE280F0081FF5F /* MUAssetsLibrary.m */,
+				16438F241CC8EAEF00C23068 /* MUAssetImageManager.h */,
+				16438F251CC8EAEF00C23068 /* MUAssetImageManager.m */,
 			);
 			path = MUAssetsLibrary;
 			sourceTree = "<group>";
@@ -202,6 +207,7 @@
 				169E846E1CBE280F0081FF5F /* MUAsset.m in Sources */,
 				169E84501CBE26E70081FF5F /* main.m in Sources */,
 				169E84741CBE35440081FF5F /* MUAlbumTableViewCell.m in Sources */,
+				16438F261CC8EAEF00C23068 /* MUAssetImageManager.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

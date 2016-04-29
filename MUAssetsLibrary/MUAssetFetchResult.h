@@ -8,15 +8,13 @@
 
 #import <Foundation/Foundation.h>
 
-@class MUAsset, MUAssetCollection;
+@class MUAsset;
 
 /**
  @brief
  类似PHFetchResult功能的资源集合用来检索Asset，预先加载指定数量的资源以避免全部加载速度过慢的问题
  */
 @interface MUAssetFetchResult : NSObject
-
-+ (instancetype)resultWithAssetCollection:(MUAssetCollection *)assetCollection;
 
 - (BOOL)containsObject:(MUAsset *)anObject;
 

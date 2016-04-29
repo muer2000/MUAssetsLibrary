@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import "MUAssetFetchResult.h"
 
 /** 资源集类型 */
 typedef NS_ENUM(NSInteger, MUAssetCollectionType) {
@@ -26,6 +27,8 @@ typedef NS_ENUM(NSInteger, MUAssetCollectionSubtype) {
     MUAssetCollectionSubtypeAny                     = NSIntegerMax  // PHAssetCollectionSubtypeAny
 };
 
+@class MUAsset;
+
 /**
  @brief
  AssetCollection表示资源集合(相册)，iOS8之前版本为ALAssetsGroup，iOS8以上(包括)对应PHAssetCollection对象
@@ -34,6 +37,9 @@ typedef NS_ENUM(NSInteger, MUAssetCollectionSubtype) {
 
 /** 请求预览图 */
 - (int32_t)requestPosterImageWithCompletionHandler:(void(^)(UIImage *image, NSDictionary *info))completionHandler;
+
+/** 添加asset */
+- (BOOL)addAsset:(MUAsset *)asset;
 
 /** 资源集(相册)PHAssetCollection/ALAssetsGroup */
 @property (nonatomic, strong, readonly) id realAssetCollection;
@@ -51,5 +57,8 @@ typedef NS_ENUM(NSInteger, MUAssetCollectionSubtype) {
 @property (nonatomic, assign, readonly) MUAssetCollectionSubtype subType NS_AVAILABLE_IOS(8_0);
 /** 资源总数量 */
 @property (nonatomic, assign, readonly) NSInteger numberOfAssets;
+
+/** 资源集合 */
+@property (nonatomic, readonly) MUAssetFetchResult *fetchResult;
 
 @end

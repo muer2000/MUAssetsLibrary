@@ -8,7 +8,7 @@
 
 #import "MUAssetsLibrary.h"
 #import <CoreLocation/CoreLocation.h>
-#import <AVFoundation/AVFoundation.h>
+#import "MUAssetImageManager.h"
 
 typedef NSString * (^MUAssetWritePerformChangeBlock) (void);
 
@@ -37,54 +37,33 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
 #define kMUAssetsLibraryUnauthorized (kAuthorizationStatus == MUPHAuthorizationStatusDenied ||\
     kAuthorizationStatus == MUPHAuthorizationStatusRestricted)
 
+#define kUnauthorizedError ([NSError errorWithDomain:@"Photos Access not allowed" code:2047 userInfo:nil])
 
-@interface UIImage (Private)
-- (UIImage *)p_fixOrientation;
+@interface UIImage (MUMetadata)
+
+- (NSData *)mu_dataWithMetadata:(NSDictionary *)metadata;
+
 @end
 
-@interface MUAsset ()
+@interface MUAsset (MUPrivate)
 
 + (instancetype)p_assetWithPHAsset:(PHAsset *)phAsset;
 + (instancetype)p_assetWithALAsset:(ALAsset *)alAsset;
 
 @end
 
-@interface MUAssetCollection ()
+@interface MUAssetCollection (MUPrivate)
 
 + (instancetype)p_assetCollectionWithAssetsGroup:(ALAssetsGroup *)group;
 + (instancetype)p_assetCollectionWithPHAssetCollection:(PHAssetCollection *)phAssetCollection fetchOptions:(PHFetchOptions *)fetchOptions;
 + (instancetype)p_allPhotosCollectionWithTitle:(NSString *)title fetchOptions:(PHFetchOptions *)fetchOptions;
 
-@property (nonatomic, assign) NSInteger sortIndex;
+@property (nonatomic, readonly) NSInteger sortIndex;
 
 @end
 
+@interface MUAssetsLibrary ()
 
-@interface MUAssetsLibrary() <PHPhotoLibraryChangeObserver>
-
-- (void)p_requestPHAssetCollectionsWithMediaType:(MUAssetMediaType)mediaType completionHandler:(void(^)(NSArray *assetCollections, NSError *error))completionHandler;
-- (void)p_requestALAAssetCollectionsWithMediaType:(MUAssetMediaType)mediaType completionHandler:(void(^)(NSArray *assetCollections, NSError *error))completionHandler;
-
-- (int32_t)p_requestiCloudImageForPHAsset:(PHAsset *)asset targetSize:(CGSize)targetSize contentMode:(MUImageContentMode)contentMode options:(PHImageRequestOptions *)options fixOrientation:(BOOL)fixOrientation resultHandler:(MUAssetsLibraryResultHandler)resultHandler;
-- (void)p_requestAssetWithALAAssetURL:(NSURL *)alaAssetURL completionHandler:(void (^)(MUAsset *asset))completionHandler;
-- (void)p_requestAssetWithPHLocalIdentifier:(NSString *)phLocalIdentifier completionHandler:(void (^)(MUAsset *asset))completionHandler;
-
-- (BOOL)p_imageSizeIsLong:(CGSize)size;
-
-- (PHImageRequestOptions *)p_imageRequestOptionsWithImageType:(MUAssetImageType)imageType;
-- (CGSize)p_imageTargetSizeForImageType:(MUAssetImageType)imageType phAsset:(PHAsset *)phAsset;
-- (CGSize)p_imageTargetSizeForImageType:(MUAssetImageType)imageType;
-- (MUImageContentMode)p_imageContentModeForImageType:(MUAssetImageType)imageType;
-- (NSArray *)p_phAssetsForMUAssets:(NSArray *)MUAssets;
-- (PHFetchOptions *)p_assetFetchOptionsForMediaType:(MUAssetMediaType)mediaType;
-
-- (void)p_writeDataPerformChange:(MUAssetWritePerformChangeBlock)changeBlock completionHandler:(MUAssetsLibraryWriteCompletionHandler)completionHandler;
-- (void)p_writeImageWithAssetsLibrary:(UIImage *)image completionHandler:(MUAssetsLibraryWriteCompletionHandler)completionHandler;
-- (void)p_writeVideoWithAssetsLibraryAtURL:(NSURL *)url completionHandler:(MUAssetsLibraryWriteCompletionHandler)completionHandler;
-
-// >= iOS8
-@property (nonatomic, strong) PHCachingImageManager *imageManager;
-// < iOS8
 @property (nonatomic, strong) ALAssetsLibrary *assetsLibrary;
 
 @property (nonatomic, strong) NSArray *assetCollectionFetchResultArray;
@@ -92,7 +71,6 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
 @property (nonatomic, strong) PHFetchOptions *assetFetchOptions;
 
 @property (nonatomic, assign) MUAssetMediaType currentMediaType;
-@property (nonatomic, assign) BOOL photoLibraryChanged;
 
 @end
 
@@ -145,11 +123,6 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
     }
 }
 
-+ (NSError *)unauthorizedError
-{
-    return [NSError errorWithDomain:@"photo library unauthorized" code:-1 userInfo:nil];
-}
-
 + (BOOL)isAssetURL:(NSURL *)url
 {
     NSString *urlScheme = [[url scheme] lowercaseString];
@@ -173,33 +146,12 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
 {
     self = [super init];
     if (self) {
-        self.allPhotosAssetCollectionTitle = NSLocalizedString(@"所有照片", nil);
-        self.thumbnailSize = CGSizeMake(150, 150);
-        self.longImageAspectRation = 3.0;
-        self.ignoreDegradedImageForVideo = YES;
-        
-        CGSize screenSize = [UIScreen mainScreen].bounds.size;
-        // 忽略2倍以上尺寸
-        CGFloat maxScale = MIN([UIScreen mainScreen].scale, 2);
-        self.fullScreenImageSize = CGSizeMake(screenSize.width * maxScale, screenSize.height * maxScale);
-
-        if (kIsiOS8) {
-            self.imageManager = [[PHCachingImageManager alloc] init];
-            [[PHPhotoLibrary sharedPhotoLibrary] registerChangeObserver:self];
+        _allPhotosAssetCollectionTitle = NSLocalizedString(@"所有照片", nil);
+        if (!kIsiOS8) {
+            _assetsLibrary = [[ALAssetsLibrary alloc] init];
         }
-        else {
-            [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(assetsLibraryChangedNotification:) name:ALAssetsLibraryChangedNotification object:nil];
-            self.assetsLibrary = [[ALAssetsLibrary alloc] init];
-        }
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(appWillEnterForeground:) name:UIApplicationWillEnterForegroundNotification object:nil];
     }
     return self;
-}
-
-- (void)dealloc
-{
-    [[PHPhotoLibrary sharedPhotoLibrary] unregisterChangeObserver:self];
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 
@@ -211,7 +163,7 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
         return;
     }
     if (kMUAssetsLibraryUnauthorized) {
-        completionHandler(nil, [MUAssetsLibrary unauthorizedError]);
+        completionHandler(nil, kUnauthorizedError);
         return;
     }
 
@@ -237,7 +189,6 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
             
             if (self.allowEmptyAlbums || group.numberOfAssets > 0) {
                 MUAssetCollection *muAC = [MUAssetCollection p_assetCollectionWithAssetsGroup:group];
-                // 是否相机胶卷
                 if ([[group valueForProperty:ALAssetsGroupPropertyType] intValue] == ALAssetsGroupSavedPhotos) {
                     cameraRollCollection = muAC;
                 }
@@ -246,9 +197,7 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
                 }
             }
         }
-        // 为空时表示遍历结束
         else {
-            // 相机胶卷插入置顶
             if (cameraRollCollection) {
                 [assetCollections insertObject:cameraRollCollection atIndex:0];;
             }
@@ -265,7 +214,6 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
 
 - (void)p_requestPHAssetCollectionsWithMediaType:(MUAssetMediaType)mediaType completionHandler:(void(^)(NSArray *assetCollections, NSError *error))completionHandler
 {
-    // iOS8需要先请求访问相册权限
     if ([PHPhotoLibrary authorizationStatus] == PHAuthorizationStatusNotDetermined) {
         [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
             dispatch_main_sync_safe(^{
@@ -274,7 +222,7 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
                 }
                 else {
                     if (completionHandler) {
-                        completionHandler(nil, [MUAssetsLibrary unauthorizedError]);
+                        completionHandler(nil, kUnauthorizedError);
                     }
                 }
             });
@@ -284,33 +232,30 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
 
     self.assetFetchOptions = [self p_assetFetchOptionsForMediaType:mediaType];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        // 获得相册结果集
-        NSArray *fetchResults = [MUAssetsLibrary p_fetchResultsOfAssetCollection];
-        NSMutableArray *assetCollections = [NSMutableArray array];
+        NSArray *allAssetCollections = [MUAssetsLibrary p_allAssetCollectionWithOptions:nil];
+        NSMutableArray *muAssetCollections = [NSMutableArray array];
         BOOL hasCameraRoll = NO;
-        for (PHFetchResult *itemAssetCollectionFetchResult in fetchResults) {
-            for (PHAssetCollection *itemAssetCollection in itemAssetCollectionFetchResult) {
-                // 忽略“视频”相册
-                if (mediaType != MUAssetMediaTypeAny && itemAssetCollection.assetCollectionSubtype == PHAssetCollectionSubtypeSmartAlbumVideos) {
-                    continue;
-                }
-                
-                // 去掉最近删除资源集，最近删除=1000000201
-                if (itemAssetCollection.assetCollectionType == PHAssetCollectionTypeSmartAlbum &&
-                    itemAssetCollection.assetCollectionSubtype > 10000) {
-                    continue;
-                }
-                
-                MUAssetCollection *muAC = [MUAssetCollection p_assetCollectionWithPHAssetCollection:itemAssetCollection fetchOptions:self.assetFetchOptions];
+        for (PHAssetCollection *itemAssetCollection in allAssetCollections) {
+            // ignore video album
+            if (mediaType != MUAssetMediaTypeAny && itemAssetCollection.assetCollectionSubtype == PHAssetCollectionSubtypeSmartAlbumVideos) {
+                continue;
+            }
+            
+            // 去掉最近删除资源集，最近删除 = 1000000201
+            if (itemAssetCollection.assetCollectionType == PHAssetCollectionTypeSmartAlbum &&
+                itemAssetCollection.assetCollectionSubtype > 10000) {
+                continue;
+            }
+            
+            MUAssetCollection *muAC = [MUAssetCollection p_assetCollectionWithPHAssetCollection:itemAssetCollection fetchOptions:self.assetFetchOptions];
 
-                if (!hasCameraRoll && itemAssetCollection.assetCollectionSubtype == PHAssetCollectionSubtypeSmartAlbumUserLibrary) {
-                    hasCameraRoll = YES;
-                }
-                
-                // 忽略空相册
-                if (self.allowEmptyAlbums || muAC.numberOfAssets > 0) {
-                    [assetCollections addObject:muAC];
-                }
+            if (!hasCameraRoll && itemAssetCollection.assetCollectionSubtype == PHAssetCollectionSubtypeSmartAlbumUserLibrary) {
+                hasCameraRoll = YES;
+            }
+            
+            // 忽略空相册
+            if (self.allowEmptyAlbums || muAC.numberOfAssets > 0) {
+                [muAssetCollections addObject:muAC];
             }
         }
         
@@ -318,16 +263,16 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
         if (!hasCameraRoll) {
             MUAssetCollection *allPhotosAC = [MUAssetCollection p_allPhotosCollectionWithTitle:self.allPhotosAssetCollectionTitle fetchOptions:self.assetFetchOptions];
             if (allPhotosAC.numberOfAssets > 0) {
-                [assetCollections insertObject:allPhotosAC atIndex:0];
+                [muAssetCollections insertObject:allPhotosAC atIndex:0];
             }
         }
 
-        NSSortDescriptor *sortDesc = [NSSortDescriptor sortDescriptorWithKey:@"sortIndex" ascending:YES];
-        [assetCollections sortUsingDescriptors:@[sortDesc]];
+        NSSortDescriptor *sortDesc = [NSSortDescriptor sortDescriptorWithKey:NSStringFromSelector(@selector(sortIndex)) ascending:YES];
+        [muAssetCollections sortUsingDescriptors:@[sortDesc]];
         
         dispatch_main_sync_safe(^{
             if (completionHandler) {
-                completionHandler(assetCollections, nil);
+                completionHandler(muAssetCollections, nil);
             }
         });
     });
@@ -381,10 +326,8 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
             }
         }
         if (firstAsset) {
-            [_imageManager requestImageForAsset:firstAsset targetSize:self.thumbnailSize contentMode:PHImageContentModeAspectFill options:nil resultHandler:^(UIImage *result, NSDictionary *info) {
-                if ([[info objectForKey:PHImageResultIsDegradedKey] integerValue] != 1) {
-                    completionHandler(result);
-                }
+            [MUAssetImageManager requestThumbnailForAsset:[MUAsset p_assetWithPHAsset:firstAsset] resultHandler:^(UIImage *image, NSDictionary *info) {
+                completionHandler(image);
             }];
         }
         else {
@@ -425,422 +368,62 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
 }
 
 
-#pragma mark - Image Request
-
-- (int32_t)requestThumbnailForAsset:(MUAsset *)asset resultHandler:(MUAssetsLibraryResultHandler)resultHandler
-{
-    return [self requestImageForAsset:asset
-                            imageType:MUAssetImageTypeThumbnail
-                        resultHandler:resultHandler];
-}
-
-- (int32_t)requestImageForAsset:(MUAsset *)asset imageType:(MUAssetImageType)imageType resultHandler:(MUAssetsLibraryResultHandler)resultHandler
-{
-    return [self requestImageForAsset:asset
-                            imageType:imageType
-                       fixOrientation:NO
-                        resultHandler:resultHandler];
-}
-
-- (int32_t)requestImageForAsset:(MUAsset *)asset imageType:(MUAssetImageType)imageType fixOrientation:(BOOL)fixOrientation resultHandler:(MUAssetsLibraryResultHandler)resultHandler
-{
-    if (!resultHandler) {
-        return 0;
-    }
-    if ([asset.realAsset isKindOfClass:[PHAsset class]]) {
-        return [self requestImageForPHAsset:asset.realAsset
-                                 targetSize:[self p_imageTargetSizeForImageType:imageType phAsset:asset.realAsset]
-                                contentMode:[self p_imageContentModeForImageType:imageType]
-                                    options:[self p_imageRequestOptionsWithImageType:imageType]
-                             fixOrientation:fixOrientation
-                              resultHandler:resultHandler];
-    }
-    else {
-        if ([asset.realAsset isKindOfClass:[ALAsset class]]) {
-            [self requestImageForALAsset:asset.realAsset imageType:imageType resultHandler:resultHandler];
-        }
-        else if (asset.url) {
-            [self requestImageForALAssetURL:asset.url imageType:imageType resultHandler:resultHandler];
-        }
-        else {
-            resultHandler(nil, nil);
-        }
-        return 0;
-    }
-}
-
-- (int32_t)requestImageForPHAsset:(PHAsset *)asset targetSize:(CGSize)targetSize contentMode:(MUImageContentMode)contentMode options:(PHImageRequestOptions *)options resultHandler:(MUAssetsLibraryResultHandler)resultHandler
-{
-    return [self requestImageForPHAsset:asset
-                             targetSize:targetSize
-                            contentMode:contentMode
-                                options:options
-                         fixOrientation:NO
-                          resultHandler:resultHandler];
-}
-
-- (int32_t)requestImageForPHAsset:(PHAsset *)asset targetSize:(CGSize)targetSize contentMode:(MUImageContentMode)contentMode options:(PHImageRequestOptions *)options fixOrientation:(BOOL)fixOrientation resultHandler:(MUAssetsLibraryResultHandler)resultHandler
-{
-    if (!resultHandler) {
-        return 0;
-    }
-    if (kMUAssetsLibraryUnauthorized || !asset || !asset.localIdentifier) {
-        resultHandler(nil, nil);
-        return 0;
-    }
-    return [_imageManager requestImageForAsset:asset
-                                    targetSize:targetSize
-                                   contentMode:(PHImageContentMode)contentMode
-                                       options:options
-                                 resultHandler:^(UIImage *result, NSDictionary *info)
-            {
-                BOOL isDegraded = ([[info objectForKey:PHImageResultIsDegradedKey] intValue] == 1);
-                // 视频忽略低质量图(视频的低质量图带有视频标识水印)
-                if (self.ignoreDegradedImageForVideo && asset.mediaType == PHAssetMediaTypeVideo) {
-                    if (!isDegraded) {
-                        dispatch_main_sync_safe(^{
-                            resultHandler(result, info);
-                        });
-                    }
-                    return;
-                }
-
-                // 照片流里的资源获取不到原图需要从iCloud下载，故先用缩略图替代
-                if (!isDegraded && !result) {
-                    [self p_requestiCloudImageForPHAsset:asset
-                                              targetSize:targetSize
-                                             contentMode:contentMode
-                                                 options:options
-                                          fixOrientation:fixOrientation
-                                           resultHandler:resultHandler];
-                    return;
-                }
-                
-                UIImage *imageResult = result;
-                // 非缩略图需要调整方向
-                if (imageResult && !isDegraded && fixOrientation) {
-                    imageResult = [imageResult p_fixOrientation];
-                }
-                
-                dispatch_main_sync_safe(^{
-                    resultHandler(imageResult, info);
-                });
-            }];
-}
-
-- (void)cancelImageRequest:(int32_t)requestID
-{
-    if (kMUAssetsLibraryUnauthorized) {
-        return;
-    }
-    if (requestID > 0 && _imageManager) {
-        [_imageManager cancelImageRequest:requestID];
-    }
-}
-
-- (UIImage *)imageForAsset:(MUAsset *)asset imageType:(MUAssetImageType)imageType
-{
-    if ([asset.realAsset isKindOfClass:[PHAsset class]]) {
-        return [self imageForPHAsset:asset.realAsset imageType:imageType];
-    }
-    else if ([asset.realAsset isKindOfClass:[ALAsset class]]) {
-        return [self imageForALAsset:asset.realAsset imageType:imageType];
-    }
-    return nil;
-}
-
-- (UIImage *)imageForPHAsset:(PHAsset *)asset imageType:(MUAssetImageType)imageType
-{
-    PHImageRequestOptions *options = [self p_imageRequestOptionsWithImageType:imageType];
-    if (!options) {
-        options = [[PHImageRequestOptions alloc] init];
-    }
-    options.synchronous = YES;
-    
-    __block UIImage *result = nil;
-    [self requestImageForPHAsset:asset
-                      targetSize:[self p_imageTargetSizeForImageType:imageType phAsset:asset]
-                     contentMode:[self p_imageContentModeForImageType:imageType]
-                         options:options
-                  fixOrientation:YES
-                   resultHandler:^(UIImage *image, NSDictionary *info) {
-                       result = image;
-                   }];
-    return result;
-}
-
-- (UIImage *)imageForALAsset:(ALAsset *)asset imageType:(MUAssetImageType)imageType
-{
-    if (!asset) {
-        return nil;
-    }
-    UIImage *image = nil;
-    ALAssetRepresentation *rep = asset.defaultRepresentation;
-    switch (imageType) {
-        case MUAssetImageTypeThumbnail:
-            image = [UIImage imageWithCGImage:asset.thumbnail];
-            break;
-        case MUAssetImageTypeAspectRatioThumbnail:
-            image = [UIImage imageWithCGImage:asset.aspectRatioThumbnail];
-            break;
-        case MUAssetImageTypeFullScreen:
-            image = [UIImage imageWithCGImage:rep.fullScreenImage];
-            break;
-        case MUAssetImageTypeFullScreenEx:
-        case MUAssetImageTypeExactFullScreenEx:
-            // 超长图取原始高清图
-            if ([self p_imageSizeIsLong:rep.dimensions]) {
-                return [self imageForALAsset:asset imageType:MUAssetImageTypeOriginalAdjusted];
-            }
-            else {
-                image = [self imageForALAsset:asset imageType:MUAssetImageTypeFullScreen];
-            }
-            break;
-        case MUAssetImageTypeOriginal:
-            image = [UIImage imageWithCGImage:rep.fullResolutionImage];
-            break;
-        default: {
-            CGImageRef imageRef = CGImageRetain(rep.fullResolutionImage);
-            NSString *adjustment = [rep.metadata objectForKey:@"AdjustmentXMP"];
-            if (adjustment) {
-                NSData *xmpData = [adjustment dataUsingEncoding:NSUTF8StringEncoding];
-                CIImage *image = [CIImage imageWithCGImage:imageRef];
-                
-                NSError *error = nil;
-                NSArray *filterArray = [CIFilter filterArrayFromSerializedXMP:xmpData
-                                                             inputImageExtent:image.extent
-                                                                        error:&error];
-                CIContext *context = [CIContext contextWithOptions:nil];
-                if (filterArray && !error) {
-                    for (CIFilter *filter in filterArray) {
-                        [filter setValue:image forKey:kCIInputImageKey];
-                        image = [filter outputImage];
-                    }
-                    CGImageRelease(imageRef);
-                    imageRef = [context createCGImage:image fromRect:[image extent]];
-                }
-            }
-            image = [UIImage imageWithCGImage:imageRef
-                                        scale:rep.scale
-                                  orientation:(UIImageOrientation)rep.orientation];
-            CGImageRelease(imageRef);
-            image = [image p_fixOrientation];
-        }
-            break;
-    }
-    if (image == nil && asset.aspectRatioThumbnail) {
-        image = [UIImage imageWithCGImage:asset.aspectRatioThumbnail];
-    }
-    return image;
-}
-
-- (void)requestImageForALAsset:(ALAsset *)asset imageType:(MUAssetImageType)imageType resultHandler:(MUAssetsLibraryResultHandler)resultHandler
-{
-    if (!resultHandler) {
-        return;
-    }
-    if (kMUAssetsLibraryUnauthorized) {
-        resultHandler(nil, nil);
-        return;
-    }
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-        UIImage *image = [self imageForALAsset:asset imageType:imageType];
-        dispatch_main_sync_safe(^{
-            if (resultHandler) {
-                resultHandler(image, nil);
-            }
-        });
-    });
-}
-
-- (void)requestImageForALAssetURL:(NSURL *)assetURL imageType:(MUAssetImageType)imageType resultHandler:(MUAssetsLibraryResultHandler)resultHandler
-{
-    if (!resultHandler) {
-        return;
-    }
-    if (kMUAssetsLibraryUnauthorized || !assetURL) {
-        resultHandler(nil, nil);
-        return;
-    }
-
-    __weak MUAssetsLibrary *wSelf = self;
-    [_assetsLibrary assetForURL:assetURL resultBlock:^(ALAsset *asset) {
-        [wSelf requestImageForALAsset:asset imageType:imageType resultHandler:resultHandler];
-    } failureBlock:^(NSError *error) {
-        resultHandler(nil, nil);
-    }];
-}
-
-
-#pragma mark - Video Request
-
-- (int32_t)requestVideoAVAssetForAsset:(MUAsset *)asset resultHandler:(void (^)(AVAsset *asset, NSDictionary *info))resultHandler
-{
-    if (!resultHandler) {
-        return 0;
-    }
-    if (kMUAssetsLibraryUnauthorized || !asset.localIdentifier) {
-        resultHandler(nil, nil);
-        return 0;
-    }
-    
-    if ([asset.realAsset isKindOfClass:[PHAsset class]]) {
-        if (!asset.realAsset || ![asset.realAsset isKindOfClass:[PHAsset class]]) {
-            resultHandler(nil, nil);
-            return 0;
-        }
-        return [_imageManager requestAVAssetForVideo:asset.realAsset options:nil resultHandler:^(AVAsset *asset, AVAudioMix *audioMix, NSDictionary *info) {
-            dispatch_main_sync_safe(^{
-                resultHandler(asset, info);
-            });
-        }];
-    }
-    else {
-        AVURLAsset *avAsset = [AVURLAsset URLAssetWithURL:asset.url options:nil];
-        resultHandler(avAsset, nil);
-        return 0;
-    }
-}
-
-
-#pragma mark - Write Data
+#pragma mark - Write image
 
 - (void)writeImage:(UIImage *)image completionHandler:(MUAssetsLibraryWriteCompletionHandler)completionHandler
 {
-    if (kMUAssetsLibraryUnauthorized) {
-        return;
-    }
-    if (!image) {
-        if (completionHandler)
-            completionHandler(nil, nil);
-        return;
-    }
-    if (kIsiOS8) {
-        [self p_writeDataPerformChange:^NSString *{
-            PHAssetChangeRequest *request = [PHAssetChangeRequest creationRequestForAssetFromImage:image];
-            return [request placeholderForCreatedAsset].localIdentifier;
-        } completionHandler:completionHandler];
-    }
-    else {
-        [self p_writeImageWithAssetsLibrary:image completionHandler:completionHandler];
-    }
+    [self writeImage:image metadata:nil completionHandler:completionHandler];
 }
 
 - (void)writeImage:(UIImage *)image metadata:(NSDictionary *)metadata completionHandler:(MUAssetsLibraryWriteCompletionHandler)completionHandler
 {
-    if (kMUAssetsLibraryUnauthorized || !image) {
+    if (!image) {
         if (completionHandler) {
             completionHandler(nil, nil);
         }
         return;
     }
-    if (!self.assetsLibrary) {
-        self.assetsLibrary = [[ALAssetsLibrary alloc] init];
+    if (kMUAssetsLibraryUnauthorized) {
+        if (completionHandler) {
+            completionHandler(nil, kUnauthorizedError);
+        }
+        return;
     }
-    __weak MUAssetsLibrary *wSelf = self;
-    [_assetsLibrary writeImageToSavedPhotosAlbum:image.CGImage metadata:metadata completionBlock:^(NSURL *assetURL, NSError *error) {
-        if (error.code == ALAssetsLibraryWriteBusyError) {
-            // recursive
-            [wSelf writeImage:image metadata:metadata completionHandler:completionHandler];
-            return;
-        }
-        if (!completionHandler) {
-            return;
-        }
-        if (error || !assetURL) {
-            dispatch_main_sync_safe(^{
-                if (completionHandler)
-                    completionHandler(nil, error);
-            });
+    
+    if (kIsiOS8) {
+        if (metadata) {
+            [self p_photoLibraryWriteImage:image metadata:metadata completionHandler:completionHandler];
         }
         else {
-            if (kIsiOS8) {
-                PHFetchResult *fetchResult = [PHAsset fetchAssetsWithALAssetURLs:@[assetURL] options:nil];
-                id result = nil;
-                if (fetchResult.count > 0) {
-                    result = [MUAsset p_assetWithPHAsset:fetchResult.firstObject];
-                }
-                dispatch_main_sync_safe(^{
-                    if (completionHandler)
-                        completionHandler(result, nil);
-                });
-            }
-            else {
-                [wSelf.assetsLibrary assetForURL:assetURL resultBlock:^(ALAsset *asset) {
-                    if (!asset) {
-                    }
-                    dispatch_main_sync_safe(^{
-                        if (completionHandler) {
-                            completionHandler([MUAsset p_assetWithALAsset:asset], nil);
-                        }
-                    });
-                } failureBlock:^(NSError *error) {
-                    dispatch_main_sync_safe(^{
-                        if (completionHandler)
-                            completionHandler(nil, error);
-                    });
-                }];
-            }
+            [self p_writeAssetPerformChange:^NSString *{
+                PHAssetChangeRequest *request = [PHAssetChangeRequest creationRequestForAssetFromImage:image];
+                return request.placeholderForCreatedAsset.localIdentifier;
+            } completionHandler:completionHandler];
         }
-    }]; 
-}
-
-- (void)writeImageData:(NSData *)imageData metadata:(NSDictionary *)metadata completionHandler:(MUAssetsLibraryWriteCompletionHandler)completionHandler
-{
-    if (kMUAssetsLibraryUnauthorized || !imageData) {
-        if (completionHandler) {
-            completionHandler(nil, nil);
-        }
-        return;
     }
-    if (!self.assetsLibrary) {
-        self.assetsLibrary = [[ALAssetsLibrary alloc] init];
+    else {
+        [self p_assetsLibraryWriteImage:image metadata:metadata completionHandler:completionHandler];
     }
-    __weak MUAssetsLibrary *wSelf = self;
-    [_assetsLibrary writeImageDataToSavedPhotosAlbum:imageData metadata:metadata completionBlock:^(NSURL *assetURL, NSError *error) {
-        if (error.code == ALAssetsLibraryWriteBusyError) {
-            // recursive
-            [wSelf writeImageData:imageData metadata:metadata completionHandler:completionHandler];
-            return;
-        }
-        if (completionHandler) {
-            if (error) {
-                dispatch_main_sync_safe(^{
-                    if (completionHandler)
-                        completionHandler(nil, error);
-                });
-            }
-            else {
-                [wSelf.assetsLibrary assetForURL:assetURL resultBlock:^(ALAsset *asset) {
-                    dispatch_main_sync_safe(^{
-                        if (completionHandler) {
-                            completionHandler([MUAsset p_assetWithALAsset:asset], nil);
-                        }
-                    });
-                } failureBlock:^(NSError *error) {
-                    dispatch_main_sync_safe(^{
-                        if (completionHandler)
-                            completionHandler(nil, error);
-                    });
-                }];
-            }
-        }
-    }];
 }
 
 - (void)writeVideoAtURL:(NSURL *)url completionHandler:(MUAssetsLibraryWriteCompletionHandler)completionHandler
 {
-    if (kMUAssetsLibraryUnauthorized) {
+    if (!url) {
+        if (completionHandler) {
+            completionHandler(nil, nil);
+        }
         return;
     }
-    if (!url) {
-        completionHandler(nil, nil);
+    if (kMUAssetsLibraryUnauthorized) {
+        if (completionHandler) {
+            completionHandler(nil, kUnauthorizedError);
+        }
         return;
     }
     if (kIsiOS8) {
-        [self p_writeDataPerformChange:^NSString *{
+        [self p_writeAssetPerformChange:^NSString *{
             PHAssetChangeRequest *request = [PHAssetChangeRequest creationRequestForAssetFromVideoAtFileURL:url];
-            return [request placeholderForCreatedAsset].localIdentifier;
+            return request.placeholderForCreatedAsset.localIdentifier;
         } completionHandler:completionHandler];
     }
     else {
@@ -848,26 +431,43 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
     }
 }
 
+
+#pragma mark - Create/Request AssetCollection
+
 - (void)createAssetCollectionWithTitle:(NSString *)title completionHandler:(void(^)(MUAssetCollection *assetCollection, NSError *error))completionHandler
 {
+    if (kMUAssetsLibraryUnauthorized) {
+        if (completionHandler) {
+            completionHandler(nil, kUnauthorizedError);
+        }
+        return;
+    }
     if (kIsiOS8) {
-        __block NSString *localIdentifier = nil;
-        [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-            PHAssetCollectionChangeRequest *request = [PHAssetCollectionChangeRequest creationRequestForAssetCollectionWithTitle:title];
-            localIdentifier = request.placeholderForCreatedAssetCollection.localIdentifier;
-        } completionHandler:^(BOOL success, NSError *error) {
-            MUAssetCollection *result = nil;
-            if (success && localIdentifier) {
-                PHFetchResult *fetchResult = [PHAssetCollection fetchAssetCollectionsWithLocalIdentifiers:@[localIdentifier] options:nil];
-                if (fetchResult.count > 0) {
-                    result = [MUAssetCollection p_assetCollectionWithPHAssetCollection:fetchResult.firstObject fetchOptions:nil];
+        [MUAssetsLibrary requestPhotoLibraryPermissionWithCompletionHandler:^(BOOL granted) {
+            if (granted) {
+                __block NSString *localIdentifier = nil;
+                [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
+                    PHAssetCollectionChangeRequest *request = [PHAssetCollectionChangeRequest creationRequestForAssetCollectionWithTitle:title];
+                    localIdentifier = request.placeholderForCreatedAssetCollection.localIdentifier;
+                } completionHandler:^(BOOL success, NSError *error) {
+                    if (completionHandler) {
+                        MUAssetCollection *result = nil;
+                        if (success && localIdentifier) {
+                            PHFetchResult *fetchResult = [PHAssetCollection fetchAssetCollectionsWithLocalIdentifiers:@[localIdentifier] options:nil];
+                            if (fetchResult.count > 0) {
+                                result = [MUAssetCollection p_assetCollectionWithPHAssetCollection:fetchResult.firstObject fetchOptions:nil];
+                            }
+                        }
+                        dispatch_main_sync_safe(^{
+                            completionHandler(result, error);
+                        });
+                    }
+                }];
+            }
+            else {
+                if (completionHandler) {
+                    completionHandler(nil, kUnauthorizedError);
                 }
-            }
-            if (completionHandler) {
-                completionHandler(result, error);
-            }
-            if (!success) {
-                NSLog(@"*** Error creating album: %@", error);
             }
         }];
     }
@@ -890,50 +490,54 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
     }
 }
 
-
-#pragma mark - Export Video
-
-- (void)exportVideoForAsset:(MUAsset *)asset outputURL:(NSURL *)outputURL completionHandler:(void(^)(BOOL success))completionHandler
+- (void)requestAssetCollectionsWithTitle:(NSString *)title completionHandler:(void (^)(MUAssetCollection *assetCollection, NSError *error))completionHandler
 {
-    [self requestVideoAVAssetForAsset:asset resultHandler:^(AVAsset *avAsset, NSDictionary *info) {
-        if (avAsset) {
-            [self exportVideoForAVAsset:avAsset presetName:AVAssetExportPresetMediumQuality outputURL:outputURL maxLength:60 completionHandler:completionHandler];
-        }
-        else {
-            dispatch_main_sync_safe(^{
-                if (completionHandler) {
-                    completionHandler(NO);
-                }
-            });
-        }
-    }];
-}
-
-- (void)exportVideoForAVAsset:(AVAsset *)avAsset presetName:(NSString *)presetName outputURL:(NSURL *)outputURL maxLength:(NSInteger)maxLength completionHandler:(void(^)(BOOL success))completionHandler
-{
-    if (kMUAssetsLibraryUnauthorized) {
+    if (!completionHandler) {
         return;
     }
-    AVAssetExportSession *session = [AVAssetExportSession exportSessionWithAsset:avAsset presetName:presetName];
-    NSString *outputPath = [outputURL path];
-    if ([[NSFileManager defaultManager] fileExistsAtPath:outputPath]) {
-        [[NSFileManager defaultManager] removeItemAtPath:outputPath error:nil];
+    if (kMUAssetsLibraryUnauthorized) {
+        completionHandler(nil, kUnauthorizedError);
+        return;
     }
-    session.outputURL = outputURL;
-    session.outputFileType = AVFileTypeMPEG4;
-    session.shouldOptimizeForNetworkUse = YES;
-    if (maxLength == 0) {
-        maxLength = 60;
-    }
-    session.timeRange = CMTimeRangeMake(kCMTimeZero, CMTimeMake(600 * maxLength, 600));
-    [session exportAsynchronouslyWithCompletionHandler:^{
-        dispatch_main_sync_safe(^{
-            if (completionHandler) {
-                completionHandler(session.status == AVAssetExportSessionStatusCompleted);
+    
+    if (kIsiOS8) {
+        [MUAssetsLibrary requestPhotoLibraryPermissionWithCompletionHandler:^(BOOL granted) {
+            if (granted) {
+                PHFetchOptions *options = [[PHFetchOptions alloc] init];
+                options.predicate = [NSPredicate predicateWithFormat:@"localizedTitle = %@", title];
+                NSArray *allAssetCollections = [MUAssetsLibrary p_allAssetCollectionWithOptions:options];
+                if (allAssetCollections.count > 0) {
+                    completionHandler([MUAssetCollection p_assetCollectionWithPHAssetCollection:allAssetCollections.firstObject fetchOptions:nil], nil);
+                }
+                else {
+                    completionHandler(nil, nil);
+                }
             }
-        });
-    }];
+            else {
+                completionHandler(nil, kUnauthorizedError);
+            }
+        }];
+    }
+    else {
+        [_assetsLibrary enumerateGroupsWithTypes:ALAssetsGroupAll usingBlock:^(ALAssetsGroup *group, BOOL *stop) {
+            if (group) {
+                NSString *groupTitle = [group valueForProperty:ALAssetsGroupPropertyName];
+                if ([title isEqualToString:groupTitle]) {
+                    completionHandler([MUAssetCollection p_assetCollectionWithAssetsGroup:group], nil);
+                    *stop = YES;
+                }
+            }
+            else {
+                completionHandler(nil, nil);
+            }
+        } failureBlock:^(NSError *error) {
+            completionHandler(nil, error);
+        }];
+    }
 }
+
+
+#pragma mark - Request Asset
 
 - (void)requestAssetWithLocalIdentifier:(NSString *)localIdentifier completionHandler:(void (^)(MUAsset *asset))completionHandler
 {
@@ -981,7 +585,7 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
         return;
     }
     if ([asset.realAsset isKindOfClass:[PHAsset class]]) {
-        PHContentEditingInputRequestOptions *editOptions = [[PHContentEditingInputRequestOptions alloc]init];
+        PHContentEditingInputRequestOptions *editOptions = [[PHContentEditingInputRequestOptions alloc] init];
         editOptions.networkAccessAllowed = YES;
         [asset.realAsset requestContentEditingInputWithOptions:editOptions completionHandler:^(PHContentEditingInput *contentEditingInput, NSDictionary *info) {
             CIImage *image = [CIImage imageWithContentsOfURL:contentEditingInput.fullSizeImageURL];
@@ -995,119 +599,111 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
     }
 }
 
-#pragma mark - Image Cache
-
-- (void)startCachingThumbnailForAssets:(NSArray *)assets
-{
-    [self startCachingImagesForAssets:assets imageType:MUAssetImageTypeThumbnail];
-}
-
-- (void)startCachingImagesForAssets:(NSArray *)assets imageType:(MUAssetImageType)imageType
-{
-    if (kMUAssetsLibraryUnauthorized) {
-        return;
-    }
-    NSArray *assetArray = [self p_phAssetsForMUAssets:assets];
-    if (assetArray) {
-        [self.imageManager startCachingImagesForAssets:assetArray
-                                            targetSize:[self p_imageTargetSizeForImageType:imageType]
-                                           contentMode:(PHImageContentMode)[self p_imageContentModeForImageType:imageType]
-                                               options:nil];
-    }
-}
-
-- (void)stopCachingThumbnailForAssets:(NSArray *)assets
-{
-    [self stopCachingImagesForAssets:assets imageType:MUAssetImageTypeThumbnail];
-}
-
-- (void)stopCachingImagesForAssets:(NSArray *)assets imageType:(MUAssetImageType)imageType
-{
-    if (!kMUAssetsLibraryUnauthorized) {
-        NSArray *assetArray = [self p_phAssetsForMUAssets:assets];
-        if (assetArray) {
-            [self.imageManager stopCachingImagesForAssets:assetArray
-                                               targetSize:[self p_imageTargetSizeForImageType:imageType]
-                                              contentMode:(PHImageContentMode)[self p_imageContentModeForImageType:imageType]
-                                                  options:nil];
-        }
-    }
-}
-
-- (void)stopCachingImagesForAllAssets
-{
-    if (!kMUAssetsLibraryUnauthorized) {
-        [self.imageManager stopCachingImagesForAllAssets];
-    }
-}
-
 
 #pragma mark - Private Write
 
-- (void)p_writeDataPerformChange:(MUAssetWritePerformChangeBlock)changeBlock completionHandler:(MUAssetsLibraryWriteCompletionHandler)completionHandler
+- (void)p_photoLibraryWriteImage:(UIImage *)image metadata:(NSDictionary *)metadata completionHandler:(MUAssetsLibraryWriteCompletionHandler)completionHandler
 {
-    if (!changeBlock) {
-        if (completionHandler)
-            completionHandler(nil, nil);
-        return;
-    }
-    __block NSString *localIdentifier = nil;
-    [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-        localIdentifier = changeBlock();
-    } completionHandler:^(BOOL success, NSError *error) {
-        if (completionHandler) {
-            if (success) {
-                PHFetchResult *fetch = [PHAsset fetchAssetsWithLocalIdentifiers:@[localIdentifier] options:nil];
-                if (fetch.count > 0) {
-                    dispatch_main_sync_safe(^{
-                        if (completionHandler)
-                            completionHandler([MUAsset p_assetWithPHAsset:[fetch firstObject]], nil);
-                    });
-                    return;
-                }
-            }
-            dispatch_main_sync_safe(^{
-                if (completionHandler)
-                    completionHandler(nil, error);
-            });
-        }
-    }];
-}
+    NSData *imageData = [image mu_dataWithMetadata:metadata];
 
-- (void)p_writeImageWithAssetsLibrary:(UIImage *)image completionHandler:(MUAssetsLibraryWriteCompletionHandler)completionHandler
-{
-    if (kMUAssetsLibraryUnauthorized) {
-        if (completionHandler) {
-            completionHandler(nil, nil);
-        }
-        return;
+    // To preserve the metadata, we create an asset from the JPEG NSData representation.
+    // Note that creating an asset from a UIImage discards the metadata.
+    // In iOS 9, we can use -[PHAssetCreationRequest addResourceWithType:data:options].
+    // In iOS 8, we save the image to a temporary file and use +[PHAssetChangeRequest creationRequestForAssetFromImageAtFileURL:].
+    if ([PHAssetCreationRequest class]) {
+        [self p_writeAssetPerformChange:^NSString *{
+            PHAssetCreationRequest *request = [PHAssetCreationRequest creationRequestForAsset];
+            [request addResourceWithType:PHAssetResourceTypePhoto data:imageData options:nil];
+            return request.placeholderForCreatedAsset.localIdentifier;
+        } completionHandler:completionHandler];
     }
-    __weak MUAssetsLibrary *wSelf = self;
-    [_assetsLibrary writeImageToSavedPhotosAlbum:image.CGImage orientation:(ALAssetOrientation)image.imageOrientation completionBlock:^(NSURL *assetURL, NSError *error) {
-        if (error.code == ALAssetsLibraryWriteBusyError) {
-            // recursive
-            [wSelf p_writeImageWithAssetsLibrary:image completionHandler:completionHandler];
+    else {
+        NSString *temporaryFileName = [NSProcessInfo processInfo].globallyUniqueString;
+        NSString *temporaryFilePath = [NSTemporaryDirectory() stringByAppendingPathComponent:[temporaryFileName stringByAppendingPathExtension:@"jpg"]];
+        NSURL *temporaryFileURL = [NSURL fileURLWithPath:temporaryFilePath];
+        NSError *error = nil;
+        [imageData writeToURL:temporaryFileURL options:NSDataWritingAtomic error:&error];
+        if (error) {
+            NSLog(@"Error occured while writing image data to a temporary file: %@", error);
+            if (completionHandler) {
+                completionHandler(nil, error);
+            }
             return;
         }
-        if (completionHandler) {
-            if (error) {
-                dispatch_main_sync_safe(^{
-                    if (completionHandler)
-                        completionHandler(nil, error);
-                });
+        
+        [self p_writeAssetPerformChange:^NSString *{
+            PHAssetChangeRequest *request = [PHAssetChangeRequest creationRequestForAssetFromImageAtFileURL:temporaryFileURL];
+            return request.placeholderForCreatedAsset.localIdentifier;
+        } completionHandler:^(MUAsset *asset, NSError *error) {
+            // Delete the temporary file.
+            [[NSFileManager defaultManager] removeItemAtURL:temporaryFileURL error:nil];
+            if (completionHandler) {
+                completionHandler(asset, error);
             }
-            else {
-                [wSelf.assetsLibrary assetForURL:assetURL resultBlock:^(ALAsset *asset) {
+        }];
+    }
+}
+
+- (void)p_assetsLibraryWriteImage:(UIImage *)image metadata:(NSDictionary *)metadata completionHandler:(MUAssetsLibraryWriteCompletionHandler)completionHandler
+{
+    ALAssetsLibraryWriteImageCompletionBlock writeBlock = ^(NSURL *assetURL, NSError *error){
+        if (error.code == ALAssetsLibraryWriteBusyError) {
+            // recursive
+            [self p_assetsLibraryWriteImage:image metadata:metadata completionHandler:completionHandler];
+            return;
+        }
+        if (!completionHandler) {
+            return;
+        }
+        if (error || !assetURL) {
+            completionHandler(nil, error);
+        }
+        else {
+            [_assetsLibrary assetForURL:assetURL resultBlock:^(ALAsset *asset) {
+                completionHandler([MUAsset p_assetWithALAsset:asset], nil);
+            } failureBlock:^(NSError *error) {
+                completionHandler(nil, error);
+            }];
+        }
+    };
+    
+    if (metadata) {
+        [_assetsLibrary writeImageDataToSavedPhotosAlbum:UIImageJPEGRepresentation(image, 1.0)
+                                                metadata:metadata
+                                         completionBlock:writeBlock];
+    }
+    else {
+        [_assetsLibrary writeImageToSavedPhotosAlbum:image.CGImage
+                                         orientation:(ALAssetOrientation)image.imageOrientation
+                                     completionBlock:writeBlock];
+    }
+}
+
+- (void)p_writeAssetPerformChange:(MUAssetWritePerformChangeBlock)changeBlock completionHandler:(MUAssetsLibraryWriteCompletionHandler)completionHandler
+{
+    [MUAssetsLibrary requestPhotoLibraryPermissionWithCompletionHandler:^(BOOL granted) {
+        if (granted) {
+            __block NSString *localIdentifier = nil;
+            [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
+                localIdentifier = changeBlock();
+            } completionHandler:^(BOOL success, NSError *error) {
+                if (completionHandler) {
+                    MUAsset *result = nil;
+                    if (success) {
+                        PHFetchResult *fetch = [PHAsset fetchAssetsWithLocalIdentifiers:@[localIdentifier] options:nil];
+                        if (fetch.count > 0) {
+                            result = [MUAsset p_assetWithPHAsset:fetch.firstObject];
+                        }
+                    }
                     dispatch_main_sync_safe(^{
-                        if (completionHandler)
-                            completionHandler([MUAsset p_assetWithALAsset:asset], nil);
+                        completionHandler(result, error);
                     });
-                } failureBlock:^(NSError *error) {
-                    dispatch_main_sync_safe(^{
-                        if (completionHandler)
-                            completionHandler(nil, error);
-                    });
-                }];
+                }
+            }];
+        }
+        else {
+            if (completionHandler) {
+                completionHandler(nil, kUnauthorizedError);
             }
         }
     }];
@@ -1121,31 +717,21 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
         }
         return;
     }
-    __weak MUAssetsLibrary *wSelf = self;
     [_assetsLibrary writeVideoAtPathToSavedPhotosAlbum:url completionBlock:^(NSURL *assetURL, NSError *error) {
         if (error.code == ALAssetsLibraryWriteBusyError) {
             // recursive
-            [wSelf p_writeVideoWithAssetsLibraryAtURL:url completionHandler:completionHandler];
+            [self p_writeVideoWithAssetsLibraryAtURL:url completionHandler:completionHandler];
             return;
         }
         if (completionHandler) {
             if (error) {
-                dispatch_main_sync_safe(^{
-                    if (completionHandler)
-                        completionHandler(nil, error);
-                });
+                completionHandler(nil, error);
             }
             else {
-                [wSelf.assetsLibrary assetForURL:assetURL resultBlock:^(ALAsset *asset) {
-                    dispatch_main_sync_safe(^{
-                        if (completionHandler)
-                            completionHandler([MUAsset p_assetWithALAsset:asset], nil);
-                    });
+                [_assetsLibrary assetForURL:assetURL resultBlock:^(ALAsset *asset) {
+                    completionHandler([MUAsset p_assetWithALAsset:asset], nil);
                 } failureBlock:^(NSError *error) {
-                    dispatch_main_sync_safe(^{
-                        if (completionHandler)
-                            completionHandler(nil, error);
-                    });
+                    completionHandler(nil, error);
                 }];
             }
         }
@@ -1153,98 +739,30 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
 }
 
 
-#pragma mark - Notification
-
-- (void)appWillEnterForeground:(NSNotification *)notification
-{
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [self doPhotoLibraryChanged];
-    });
-}
-
-- (void)photoLibraryDidChange:(PHChange *)changeInstance
-{
-    dispatch_main_sync_safe(^{
-        self.photoLibraryChanged = YES;
-    });
-}
-
-- (void)assetsLibraryChangedNotification:(NSNotification *)notification
-{
-    self.photoLibraryChanged = YES;
-}
-
-- (void)doPhotoLibraryChanged
-{
-    if (self.photoLibraryChanged) {
-        [[NSNotificationCenter defaultCenter] postNotificationName:MUAssetsLibraryChangedNotification object:nil];
-        self.photoLibraryChanged = NO;
-    }
-}
-
-
 #pragma mark - Private
 
-+ (NSArray *)p_fetchResultsOfAssetCollection
++ (NSArray *)p_allAssetCollectionWithOptions:(PHFetchOptions *)options
 {
     NSMutableArray *albumArray = [NSMutableArray array];
     PHFetchResult *smartAlbums = [PHAssetCollection fetchAssetCollectionsWithType:PHAssetCollectionTypeSmartAlbum subtype:PHAssetCollectionSubtypeAlbumRegular options:nil];
+    [smartAlbums enumerateObjectsUsingBlock:^(id  _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        [albumArray addObject:obj];
+    }];
+
     PHFetchResult *userAlbums = [PHAssetCollection fetchAssetCollectionsWithType:PHAssetCollectionTypeAlbum subtype:PHAssetCollectionSubtypeAny options:nil];
-    if (smartAlbums) {
-        [albumArray addObject:smartAlbums];
-    }
-    if (userAlbums) {
-        [albumArray addObject:userAlbums];
-    }
+    [userAlbums enumerateObjectsUsingBlock:^(id  _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        [albumArray addObject:obj];
+    }];
     return albumArray;
 }
 
-- (int32_t)p_requestiCloudImageForPHAsset:(PHAsset *)asset targetSize:(CGSize)targetSize contentMode:(MUImageContentMode)contentMode options:(PHImageRequestOptions *)options fixOrientation:(BOOL)fixOrientation resultHandler:(MUAssetsLibraryResultHandler)resultHandler
+- (PHFetchOptions *)p_assetFetchOptionsForMediaType:(MUAssetMediaType)mediaType
 {
-    if (!resultHandler) {
-        return 0;
+    PHFetchOptions *options = [[PHFetchOptions alloc] init];
+    if (mediaType > MUAssetMediaTypeAny) {
+        options.predicate = [NSPredicate predicateWithFormat:@"mediaType == %d", mediaType];
     }
-    if (kMUAssetsLibraryUnauthorized || !asset) {
-        resultHandler(nil, nil);
-        return 0;
-    }
-    // 先获取缩略图
-    [_imageManager requestImageForAsset:asset
-                             targetSize:[self p_imageTargetSizeForImageType:MUAssetImageTypeThumbnail]
-                            contentMode:(PHImageContentMode)[self p_imageContentModeForImageType:MUAssetImageTypeThumbnail]
-                                options:options
-                          resultHandler:^(UIImage * _Nullable result, NSDictionary * _Nullable info)
-     {
-         dispatch_main_sync_safe(^{
-             NSLog(@"*** iCloud thumbnail %@, %@", info, NSStringFromCGSize(result.size));
-             resultHandler(result, info);
-         });
-     }];
-    
-    // 获取iCloud照片流原图
-    PHImageRequestOptions *tmpOptions = options;
-    if (tmpOptions == nil) {
-        tmpOptions = [[PHImageRequestOptions alloc] init];
-    }
-    tmpOptions.networkAccessAllowed = YES;
-    tmpOptions.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
-    
-    return [_imageManager requestImageForAsset:asset
-                                    targetSize:self.fullScreenImageSize
-                                   contentMode:PHImageContentModeAspectFit
-                                       options:tmpOptions
-                                 resultHandler:^(UIImage *result, NSDictionary *info)
-            {
-                BOOL isDegraded = ([[info objectForKey:PHImageResultIsDegradedKey] intValue] == 1);
-                UIImage *imageResult = result;
-                if (imageResult && !isDegraded && fixOrientation) {
-                    imageResult = [imageResult p_fixOrientation];
-                }
-                dispatch_main_sync_safe(^{
-                    NSLog(@"*** iCloud image %@, %@", info, NSStringFromCGSize(result.size));
-                    resultHandler(imageResult, info);
-                });
-            }];
+    return options;
 }
 
 - (void)p_requestAssetWithALAAssetURL:(NSURL *)alaAssetURL completionHandler:(void (^)(MUAsset *asset))completionHandler
@@ -1278,174 +796,110 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
     }
 }
 
-- (BOOL)p_imageSizeIsLong:(CGSize)size
-{
-    return (size.width > 0 && size.height / size.width > self.longImageAspectRation);
-}
 
-- (PHImageRequestOptions *)p_imageRequestOptionsWithImageType:(MUAssetImageType)imageType
+@end
+
+
+#pragma mark - UIImage metadata category
+
+@implementation UIImage (MUMetadata)
+
+- (NSData *)mu_dataWithMetadata:(NSDictionary *)metadata
 {
-    PHImageRequestOptions *options = nil;
-    // 不加resizeMode选项默认获取的FullScreen图片太大，故需要设置resizeMode参数
-    if (imageType == MUAssetImageTypeExactFullScreenEx) {
-        options = [[PHImageRequestOptions alloc] init];
-        options.resizeMode = PHImageRequestOptionsResizeModeExact;
+    NSData *imageData = UIImageJPEGRepresentation(self, 1.0);
+    if (!metadata) {
+        return imageData;
     }
-    else if (imageType == MUAssetImageTypeOriginal) {
-        options = [[PHImageRequestOptions alloc] init];
-        options.version = PHImageRequestOptionsVersionUnadjusted;
-    }
-    return options;
-}
-
-- (CGSize)p_imageTargetSizeForImageType:(MUAssetImageType)imageType phAsset:(PHAsset *)phAsset
-{
-    switch (imageType) {
-        case MUAssetImageTypeThumbnail:
-        case MUAssetImageTypeAspectRatioThumbnail:
-            return self.thumbnailSize;
-        case MUAssetImageTypeFullScreen:
-            return self.fullScreenImageSize;
-        case MUAssetImageTypeFullScreenEx: {
-            // 超长图取原始高清图
-            if (phAsset && [self p_imageSizeIsLong:CGSizeMake(phAsset.pixelWidth, phAsset.pixelHeight)]) {
-                return PHImageManagerMaximumSize;
-            }
-            return self.fullScreenImageSize;
-        }
-        case MUAssetImageTypeExactFullScreenEx: {
-            // 超长图取原始高清图
-            if (phAsset && [self p_imageSizeIsLong:CGSizeMake(phAsset.pixelWidth, phAsset.pixelHeight)]) {
-                return PHImageManagerMaximumSize;
-            }
-            // Exact时扩大size
-            return CGSizeMake(self.fullScreenImageSize.width * 2, self.fullScreenImageSize.height * 2);
-        }
-        default:
-            return PHImageManagerMaximumSize;
-    }
-}
-
-- (CGSize)p_imageTargetSizeForImageType:(MUAssetImageType)imageType
-{
-    return [self p_imageTargetSizeForImageType:imageType phAsset:nil];
-}
-
-- (MUImageContentMode)p_imageContentModeForImageType:(MUAssetImageType)imageType
-{
-    if (imageType == MUAssetImageTypeThumbnail || imageType == MUAssetImageTypeAspectRatioThumbnail) {
-        return MUImageContentModeAspectFill;
-    }
-    return MUImageContentModeAspectFit;
-}
-
-- (NSArray *)p_phAssetsForMUAssets:(NSArray *)MUAssets
-{
-    if (MUAssets.count == 0) {
+    CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)imageData, NULL);
+    
+    CFStringRef UTI = CGImageSourceGetType(source);
+    NSMutableData *data = [NSMutableData data];
+    CGImageDestinationRef destination = CGImageDestinationCreateWithData((CFMutableDataRef) data, UTI, 1, NULL);
+    if (!destination) {
+        NSLog(@">>> Could not create image destination <<<");
+        CFRelease(source);
         return nil;
     }
-    NSMutableArray *assetArray = [NSMutableArray arrayWithCapacity:MUAssets.count];
-    for (MUAsset *itemAsset in MUAssets) {
-        if (itemAsset.realAsset && [itemAsset.realAsset isKindOfClass:[PHAsset class]]) {
-            [assetArray addObject:itemAsset.realAsset];
-        }
+    CGImageDestinationAddImageFromSource(destination, source, 0, (__bridge CFDictionaryRef) metadata);
+    BOOL success = CGImageDestinationFinalize(destination);
+    if (!success) {
+        NSLog(@">>> Error Writing Data <<<");
     }
-    return assetArray;
+    CFRelease(source);
+    CFRelease(destination);
+    return data;
 }
 
-- (PHFetchOptions *)p_assetFetchOptionsForMediaType:(MUAssetMediaType)mediaType
+@end
+
+
+#pragma mark - Assets library change observer
+
+@interface MUAssetsLibraryChangeObserver : NSObject <PHPhotoLibraryChangeObserver>
+
+@property (nonatomic, assign) BOOL photoLibraryChanged;
+
+@end
+
+static MUAssetsLibraryChangeObserver *kSharedLibraryChangeObserver = nil;
+
+@implementation MUAssetsLibraryChangeObserver
+
++ (void)load
 {
-    PHFetchOptions *options = [[PHFetchOptions alloc] init];
-    if (mediaType > MUAssetMediaTypeAny) {
-        options.predicate = [NSPredicate predicateWithFormat:@"mediaType == %d", mediaType];
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        [self registerLibraryChangeObserver];
+    });
+}
+
++ (void)registerLibraryChangeObserver
+{
+    if (!kSharedLibraryChangeObserver) {
+        kSharedLibraryChangeObserver = [[MUAssetsLibraryChangeObserver alloc] init];
     }
-    return options;
+    if (kIsiOS8) {
+        [[PHPhotoLibrary sharedPhotoLibrary] registerChangeObserver:kSharedLibraryChangeObserver];
+    }
+    else {
+        [[NSNotificationCenter defaultCenter] addObserver:kSharedLibraryChangeObserver selector:@selector(assetsLibraryChangedNotification:) name:ALAssetsLibraryChangedNotification object:nil];
+    }
+    [[NSNotificationCenter defaultCenter] addObserver:kSharedLibraryChangeObserver selector:@selector(appWillEnterForeground:) name:UIApplicationWillEnterForegroundNotification object:nil];
+}
+
+- (void)dealloc
+{
+    [[PHPhotoLibrary sharedPhotoLibrary] unregisterChangeObserver:self];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)appWillEnterForeground:(NSNotification *)notification
+{
+    if (self.photoLibraryChanged) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self postPhotoLibraryChangedNotification];
+        });
+    }
+}
+
+- (void)photoLibraryDidChange:(PHChange *)changeInstance
+{
+    dispatch_main_sync_safe(^{
+        self.photoLibraryChanged = YES;
+    });
+}
+
+- (void)assetsLibraryChangedNotification:(NSNotification *)notification
+{
+    self.photoLibraryChanged = YES;
+}
+
+- (void)postPhotoLibraryChangedNotification
+{
+    if (self.photoLibraryChanged) {
+        [[NSNotificationCenter defaultCenter] postNotificationName:MUAssetsLibraryChangedNotification object:nil];
+        self.photoLibraryChanged = NO;
+    }
 }
 
 @end
-
-
-@implementation UIImage (Private)
-
-- (UIImage *)p_fixOrientation {
-    
-    // No-op if the orientation is already correct
-    if (self.imageOrientation == UIImageOrientationUp) return self;
-    
-    // We need to calculate the proper transformation to make the image upright.
-    // We do it in 2 steps: Rotate if Left/Right/Down, and then flip if Mirrored.
-    CGAffineTransform transform = CGAffineTransformIdentity;
-    
-    switch (self.imageOrientation) {
-        case UIImageOrientationDown:
-        case UIImageOrientationDownMirrored:
-            transform = CGAffineTransformTranslate(transform, self.size.width, self.size.height);
-            transform = CGAffineTransformRotate(transform, M_PI);
-            break;
-            
-        case UIImageOrientationLeft:
-        case UIImageOrientationLeftMirrored:
-            transform = CGAffineTransformTranslate(transform, self.size.width, 0);
-            transform = CGAffineTransformRotate(transform, M_PI_2);
-            break;
-            
-        case UIImageOrientationRight:
-        case UIImageOrientationRightMirrored:
-            transform = CGAffineTransformTranslate(transform, 0, self.size.height);
-            transform = CGAffineTransformRotate(transform, -M_PI_2);
-            break;
-        case UIImageOrientationUp:
-        case UIImageOrientationUpMirrored:
-            break;
-    }
-    
-    switch (self.imageOrientation) {
-        case UIImageOrientationUpMirrored:
-        case UIImageOrientationDownMirrored:
-            transform = CGAffineTransformTranslate(transform, self.size.width, 0);
-            transform = CGAffineTransformScale(transform, -1, 1);
-            break;
-            
-        case UIImageOrientationLeftMirrored:
-        case UIImageOrientationRightMirrored:
-            transform = CGAffineTransformTranslate(transform, self.size.height, 0);
-            transform = CGAffineTransformScale(transform, -1, 1);
-            break;
-        case UIImageOrientationUp:
-        case UIImageOrientationDown:
-        case UIImageOrientationLeft:
-        case UIImageOrientationRight:
-            break;
-    }
-    
-    // Now we draw the underlying CGImage into a new context, applying the transform
-    // calculated above.
-    CGContextRef ctx = CGBitmapContextCreate(NULL, self.size.width, self.size.height,
-                                             CGImageGetBitsPerComponent(self.CGImage), 0,
-                                             CGImageGetColorSpace(self.CGImage),
-                                             CGImageGetBitmapInfo(self.CGImage));
-    CGContextConcatCTM(ctx, transform);
-    switch (self.imageOrientation) {
-        case UIImageOrientationLeft:
-        case UIImageOrientationLeftMirrored:
-        case UIImageOrientationRight:
-        case UIImageOrientationRightMirrored:
-            // Grr...
-            CGContextDrawImage(ctx, CGRectMake(0,0,self.size.height,self.size.width), self.CGImage);
-            break;
-            
-        default:
-            CGContextDrawImage(ctx, CGRectMake(0,0,self.size.width,self.size.height), self.CGImage);
-            break;
-    }
-    
-    // And now we just create a new UIImage from the drawing context
-    CGImageRef cgimg = CGBitmapContextCreateImage(ctx);
-    UIImage *img = [UIImage imageWithCGImage:cgimg];
-    CGContextRelease(ctx);
-    CGImageRelease(cgimg);
-    return img;
-}
-
-@end
-

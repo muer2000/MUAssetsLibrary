@@ -10,35 +10,25 @@
 #import <Photos/Photos.h>
 #import <AssetsLibrary/AssetsLibrary.h>
 #import "MUAsset.h"
-#import "MUAssetCollection.h"
 
-@interface MUAsset ()
+static const NSUInteger kNumberOfPreload = 100;
+
+@interface MUAsset (MUPrivate)
 
 + (instancetype)p_assetWithPHAsset:(PHAsset *)phAsset;
 + (instancetype)p_assetWithALAsset:(ALAsset *)alAsset;
 
 @end
 
-
-@interface MUAssetCollection ()
-
-// >= 8.1
-@property (nonatomic, strong) PHFetchResult<PHAsset *> *assetsFetchResult;
-// 8.0~8.1
-@property (nonatomic, strong) NSArray<PHAsset *> *assetsInAllPhoto;
-
-@end
-
-
 @interface MUAssetFetchResult ()
 
 + (MUAsset *)p_sharedNullAsset;
+
 - (NSUInteger)p_numberOfAssets;
 - (id)p_assetAtIndex:(NSUInteger)index;
 - (void)p_preloadData;
 
 @property (nonatomic, strong) NSMutableArray<MUAsset *> *assetArray;
-@property (nonatomic, assign) NSUInteger numberOfPreload;
 
 @property (nonatomic, weak) NSArray<PHAsset *> *phAssets;
 @property (nonatomic, weak) PHFetchResult<PHAsset *> *phFetchResult;
@@ -47,28 +37,6 @@
 @end
 
 @implementation MUAssetFetchResult
-
-+ (instancetype)resultWithAssetCollection:(MUAssetCollection *)assetCollection
-{
-    return [self resultWithAssetCollection:assetCollection numberOfPreload:100];
-}
-
-+ (instancetype)resultWithAssetCollection:(MUAssetCollection *)assetCollection numberOfPreload:(NSUInteger)numberOfPreload
-{
-    MUAssetFetchResult *frInstance = [[MUAssetFetchResult alloc] init];
-    frInstance.numberOfPreload = numberOfPreload;
-    if (assetCollection.assetsFetchResult) {
-        frInstance.phFetchResult = assetCollection.assetsFetchResult;
-    }
-    else if (assetCollection.assetsInAllPhoto) {
-        frInstance.phAssets = assetCollection.assetsInAllPhoto;
-    }
-    else if ([assetCollection.realAssetCollection isKindOfClass:[ALAssetsGroup class]]) {
-        frInstance.assetsGroup = assetCollection.realAssetCollection;
-    }
-    [frInstance p_preloadData];
-    return frInstance;
-}
 
 - (BOOL)containsObject:(MUAsset *)anObject
 {
@@ -210,21 +178,21 @@
     NSUInteger numberOfAssets = [self p_numberOfAssets];
     
     if (self.assetsGroup) {
-        NSRange range = NSMakeRange(0, MIN(self.numberOfPreload, numberOfAssets));
+        NSRange range = NSMakeRange(0, MIN(kNumberOfPreload, numberOfAssets));
         NSIndexSet *indexSet = [NSIndexSet indexSetWithIndexesInRange:range];
         [self.assetsGroup enumerateAssetsAtIndexes:indexSet options:0 usingBlock:^(ALAsset *result, NSUInteger index, BOOL *stop) {
             if (result) {
                 [self.assetArray addObject:[MUAsset p_assetWithALAsset:result]];
             }
         }];
-        NSInteger nullCount = MAX(0, numberOfAssets - self.numberOfPreload);
+        NSInteger nullCount = MAX(0, numberOfAssets - kNumberOfPreload);
         for (int i = 0; i < nullCount; i++) {
             [self.assetArray addObject:[MUAssetFetchResult p_sharedNullAsset]];
         }
     }
     else {
         for (int i = 0; i < numberOfAssets; i++) {
-            if (i < self.numberOfPreload) {
+            if (i < kNumberOfPreload) {
                 PHAsset *asset = self.phFetchResult ? self.phFetchResult[i] : self.phAssets[i];
                 [self.assetArray addObject:[MUAsset p_assetWithPHAsset:asset]];
             }
@@ -233,6 +201,42 @@
             }
         }
     }
+}
+
+@end
+
+@interface MUAssetFetchResult (MUPrivate)
+
++ (instancetype)p_fetchResultWithAssetInPHFetchResult:(PHFetchResult<PHAsset *> *)phFetchResult;
++ (instancetype)p_fetchResultWithPHAssets:(NSArray<PHAsset *> *)phAssets;
++ (instancetype)p_fetchResultWithAssetsGroup:(ALAssetsGroup *)assetsGroup;
+
+@end
+
+@implementation MUAssetFetchResult (MUPrivate)
+
++ (instancetype)p_fetchResultWithAssetInPHFetchResult:(PHFetchResult<PHAsset *> *)phFetchResult
+{
+    MUAssetFetchResult *instance = [[MUAssetFetchResult alloc] init];
+    instance.phFetchResult = phFetchResult;
+    [instance p_preloadData];
+    return instance;
+}
+
++ (instancetype)p_fetchResultWithPHAssets:(NSArray<PHAsset *> *)phAssets
+{
+    MUAssetFetchResult *instance = [[MUAssetFetchResult alloc] init];
+    instance.phAssets = phAssets;
+    [instance p_preloadData];
+    return instance;
+}
+
++ (instancetype)p_fetchResultWithAssetsGroup:(ALAssetsGroup *)assetsGroup
+{
+    MUAssetFetchResult *instance = [[MUAssetFetchResult alloc] init];
+    instance.assetsGroup = assetsGroup;
+    [instance p_preloadData];
+    return instance;
 }
 
 @end
