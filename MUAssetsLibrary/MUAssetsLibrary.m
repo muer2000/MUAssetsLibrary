@@ -66,12 +66,6 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
 
 @property (nonatomic, strong) ALAssetsLibrary *assetsLibrary;
 
-@property (nonatomic, strong) NSArray *assetCollectionFetchResultArray;
-@property (nonatomic, strong) MUAssetCollection *currentAssetCollection;
-@property (nonatomic, strong) PHFetchOptions *assetFetchOptions;
-
-@property (nonatomic, assign) MUAssetMediaType currentMediaType;
-
 @end
 
 
@@ -230,7 +224,7 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
         return;
     }
 
-    self.assetFetchOptions = [self p_assetFetchOptionsForMediaType:mediaType];
+    PHFetchOptions *assetFetchOptions = [self p_assetFetchOptionsForMediaType:mediaType];
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSArray *allAssetCollections = [MUAssetsLibrary p_allAssetCollectionWithOptions:nil];
         NSMutableArray *muAssetCollections = [NSMutableArray array];
@@ -247,7 +241,7 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
                 continue;
             }
             
-            MUAssetCollection *muAC = [MUAssetCollection p_assetCollectionWithPHAssetCollection:itemAssetCollection fetchOptions:self.assetFetchOptions];
+            MUAssetCollection *muAC = [MUAssetCollection p_assetCollectionWithPHAssetCollection:itemAssetCollection fetchOptions:assetFetchOptions];
 
             if (!hasCameraRoll && itemAssetCollection.assetCollectionSubtype == PHAssetCollectionSubtypeSmartAlbumUserLibrary) {
                 hasCameraRoll = YES;
@@ -261,7 +255,7 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
         
         // 没有“相机胶卷”时创建“所有照片”相册集并置顶
         if (!hasCameraRoll) {
-            MUAssetCollection *allPhotosAC = [MUAssetCollection p_allPhotosCollectionWithTitle:self.allPhotosAssetCollectionTitle fetchOptions:self.assetFetchOptions];
+            MUAssetCollection *allPhotosAC = [MUAssetCollection p_allPhotosCollectionWithTitle:self.allPhotosAssetCollectionTitle fetchOptions:assetFetchOptions];
             if (allPhotosAC.numberOfAssets > 0) {
                 [muAssetCollections insertObject:allPhotosAC atIndex:0];
             }
