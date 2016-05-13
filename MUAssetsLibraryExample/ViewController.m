@@ -11,7 +11,7 @@
 #import "MUAssetsLibrary.h"
 #import "MUAlbumTableViewCell.h"
 
-@interface ViewController ()
+@interface ViewController () <MUPhotoLibraryChangeObserver>
 
 @property (nonatomic, strong) NSArray *albums;
 @property (nonatomic, strong) MUAssetsLibrary *assetsLibrary;
@@ -29,7 +29,7 @@
         }
     }];
     
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(assetsLibraryChangedNotification:) name:MUAssetsLibraryChangedNotification object:nil];
+    [MUAssetsLibrary registerChangeObserver:self];
 }
 
 - (void)prepareForSegue:(UIStoryboardSegue *)segue sender:(id)sender
@@ -37,14 +37,6 @@
     MUAssetsViewController *assetsViewController = segue.destinationViewController;
     assetsViewController.assetsLibrary = [MUAssetsLibrary sharedLibrary];
     assetsViewController.assetCollection = self.albums[self.tableView.indexPathForSelectedRow.row];
-}
-
-- (void)assetsLibraryChangedNotification:(NSNotification *)sender
-{
-    NSLog(@"*** changed ***");
-    for (MUAssetCollection *assetCollection in self.albums) {
-        NSLog(@"title:%@, %zd, %zd", assetCollection.title, assetCollection.numberOfAssets, [assetCollection.realAssetCollection numberOfAssets]);
-    }
 }
 
 
@@ -69,6 +61,14 @@
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
 {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
+}
+
+
+#pragma mark - MUPhotoLibraryChangeObserver
+
+- (void)photoLibraryDidChange:(id)changeInstance
+{
+    NSLog(@"changeInstance: %@", changeInstance);
 }
 
 @end

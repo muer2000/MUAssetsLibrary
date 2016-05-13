@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name         = "MUAssetsLibrary"
-  s.version      = "0.9.1"
+  s.version      = "0.9.2"
   s.license      = "MIT"
   s.summary      = "Support Photos and ALAssetsLibrary photo library framework."
   s.homepage     = "https://github.com/muer2000/MUAssetsLibrary"

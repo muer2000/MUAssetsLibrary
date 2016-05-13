@@ -35,7 +35,9 @@ static NSString * const reuseIdentifier = @"AssetCell";
 
 - (MUAsset *)assetForIndexPath:(NSIndexPath *)indexPath
 {
-    return self.assetCollection.fetchResult[indexPath.item];
+    MUAssetFetchResult *result = self.assetCollection.fetchResult;
+    return result[result.count - indexPath.item - 1];
+//    return result[indexPath.item];
 }
 
    

@@ -12,8 +12,6 @@
 
 typedef NSString * (^MUAssetWritePerformChangeBlock) (void);
 
-NSString * const MUAssetsLibraryChangedNotification = @"MUAssetsLibraryChangedNotification";
-
 CGSize const MUImageManagerMaximumSize = {-1, -1};
 NSString * const MUImageResultIsInCloudKey = @"PHImageResultIsInCloudKey";
 NSString * const MUImageResultIsDegradedKey = @"PHImageResultIsDegradedKey";
@@ -59,6 +57,13 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
 + (instancetype)p_allPhotosCollectionWithTitle:(NSString *)title fetchOptions:(PHFetchOptions *)fetchOptions;
 
 @property (nonatomic, readonly) NSInteger sortIndex;
+
+@end
+
+@interface _MUObserverManager : NSObject
+
++ (void)registerChangeObserver:(id<MUPhotoLibraryChangeObserver>)observer;
++ (void)unregisterChangeObserver:(id<MUPhotoLibraryChangeObserver>)observer;
 
 @end
 
@@ -131,6 +136,19 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
         instance = [self new];
     });
     return instance;
+}
+
+
+#pragma mark - Change observer
+
++ (void)registerChangeObserver:(id<MUPhotoLibraryChangeObserver>)observer
+{
+    [_MUObserverManager registerChangeObserver:observer];
+}
+
++ (void)unregisterChangeObserver:(id<MUPhotoLibraryChangeObserver>)observer
+{
+    [_MUObserverManager unregisterChangeObserver:observer];
 }
 
 
@@ -829,36 +847,44 @@ NSString * const MUImageErrorKey = @"PHImageErrorKey";
 
 #pragma mark - Assets library change observer
 
-@interface MUAssetsLibraryChangeObserver : NSObject <PHPhotoLibraryChangeObserver>
+@interface _MUObserverManager () <PHPhotoLibraryChangeObserver>
 
-@property (nonatomic, assign) BOOL photoLibraryChanged;
+@property (nonatomic, strong) NSMutableSet *changeObservers;
 
 @end
 
-static MUAssetsLibraryChangeObserver *kSharedLibraryChangeObserver = nil;
+@implementation _MUObserverManager
 
-@implementation MUAssetsLibraryChangeObserver
-
-+ (void)load
++ (void)registerChangeObserver:(id<MUPhotoLibraryChangeObserver>)observer
 {
+    _MUObserverManager *sharedManager = [self sharedManager];
+    [sharedManager.changeObservers addObject:observer];
+    
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        [self registerLibraryChangeObserver];
+        if (kIsiOS8) {
+            // iOS 9以后调用registerChangeObserver会触发照片库访问授权
+            [[PHPhotoLibrary sharedPhotoLibrary] registerChangeObserver:sharedManager];
+        }
+        else {
+            [[NSNotificationCenter defaultCenter] addObserver:sharedManager selector:@selector(assetsLibraryChangedNotification:) name:ALAssetsLibraryChangedNotification object:nil];
+        }
     });
 }
 
-+ (void)registerLibraryChangeObserver
++ (void)unregisterChangeObserver:(id<MUPhotoLibraryChangeObserver>)observer
 {
-    if (!kSharedLibraryChangeObserver) {
-        kSharedLibraryChangeObserver = [[MUAssetsLibraryChangeObserver alloc] init];
-    }
-    if (kIsiOS8) {
-        [[PHPhotoLibrary sharedPhotoLibrary] registerChangeObserver:kSharedLibraryChangeObserver];
-    }
-    else {
-        [[NSNotificationCenter defaultCenter] addObserver:kSharedLibraryChangeObserver selector:@selector(assetsLibraryChangedNotification:) name:ALAssetsLibraryChangedNotification object:nil];
-    }
-    [[NSNotificationCenter defaultCenter] addObserver:kSharedLibraryChangeObserver selector:@selector(appWillEnterForeground:) name:UIApplicationWillEnterForegroundNotification object:nil];
+    [[[self sharedManager] changeObservers] removeObject:observer];
+}
+
++ (instancetype)sharedManager
+{
+    static id instance;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        instance = [[self alloc] init];
+    });
+    return instance;
 }
 
 - (void)dealloc
@@ -867,33 +893,32 @@ static MUAssetsLibraryChangeObserver *kSharedLibraryChangeObserver = nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
-- (void)appWillEnterForeground:(NSNotification *)notification
+- (NSMutableSet *)changeObservers
 {
-    if (self.photoLibraryChanged) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self postPhotoLibraryChangedNotification];
-        });
+    if (!_changeObservers) {
+        _changeObservers = [NSMutableSet set];
     }
+    return _changeObservers;
 }
 
+// PHPhotoLibraryChangeObserver
 - (void)photoLibraryDidChange:(PHChange *)changeInstance
 {
     dispatch_main_sync_safe(^{
-        self.photoLibraryChanged = YES;
+        [self.changeObservers enumerateObjectsUsingBlock:^(id  _Nonnull obj, BOOL * _Nonnull stop) {
+            id<MUPhotoLibraryChangeObserver> observer = obj;
+            [observer photoLibraryDidChange:changeInstance];
+        }];
     });
 }
 
+// ALAssetsLibraryChangedNotification
 - (void)assetsLibraryChangedNotification:(NSNotification *)notification
 {
-    self.photoLibraryChanged = YES;
-}
-
-- (void)postPhotoLibraryChangedNotification
-{
-    if (self.photoLibraryChanged) {
-        [[NSNotificationCenter defaultCenter] postNotificationName:MUAssetsLibraryChangedNotification object:nil];
-        self.photoLibraryChanged = NO;
-    }
+    [self.changeObservers enumerateObjectsUsingBlock:^(id  _Nonnull obj, BOOL * _Nonnull stop) {
+        id<MUPhotoLibraryChangeObserver> observer = obj;
+        [observer photoLibraryDidChange:notification.userInfo];
+    }];
 }
 
 @end

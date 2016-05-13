@@ -34,7 +34,7 @@ typedef void (^MUAssetsLibraryResultHandler)(UIImage *image, NSDictionary *info)
 
 @interface MUAssetImageManager : NSObject
 
-//** 请求缩略图 */
+/** 请求缩略图 */
 + (int32_t)requestThumbnailForAsset:(MUAsset *)asset resultHandler:(MUAssetsLibraryResultHandler)resultHandler;
 /** 请求图片按类型 适用于快速浏览查看大图 (iOS8 PHImageManager返回的非缩略图需要调整方向) */
 + (int32_t)requestImageForAsset:(MUAsset *)asset imageType:(MUAssetImageType)imageType resultHandler:(MUAssetsLibraryResultHandler)resultHandler;

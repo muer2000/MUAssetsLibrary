@@ -15,8 +15,6 @@
 
 @class AVAsset;
 
-extern NSString * const MUAssetsLibraryChangedNotification;
-
 extern CGSize const MUImageManagerMaximumSize NS_AVAILABLE_IOS(8_0);
 extern NSString * const MUImageResultIsInCloudKey NS_AVAILABLE_IOS(8_0);
 extern NSString * const MUImageResultIsDegradedKey NS_AVAILABLE_IOS(8_0);
@@ -34,6 +32,14 @@ typedef NS_ENUM(NSInteger, MUPHAuthorizationStatus) {
 typedef void (^MUAssetsLibraryWriteCompletionHandler)(MUAsset *asset, NSError *error);
 
 
+@protocol MUPhotoLibraryChangeObserver <NSObject>
+
+/** changeInstance is PHChange/NSDictionary */
+- (void)photoLibraryDidChange:(id)changeInstance;
+
+@end
+
+
 /**
  @brief
  MUAssetsLibrary资源库，分别对应ALAssetsLibrary和PHPhotoLibrary
@@ -48,6 +54,9 @@ typedef void (^MUAssetsLibraryWriteCompletionHandler)(MUAsset *asset, NSError *e
 + (BOOL)isAssetURL:(NSURL *)url;
 
 + (instancetype)sharedLibrary;
+
++ (void)registerChangeObserver:(id<MUPhotoLibraryChangeObserver>)observer;
++ (void)unregisterChangeObserver:(id<MUPhotoLibraryChangeObserver>)observer;
 
 /** 请求照片库的资源集(相册) */
 - (void)requestAssetCollectionsWithMediaType:(MUAssetMediaType)mediaType completionHandler:(void(^)(NSArray<MUAssetCollection *> *assetCollections, NSError *error))completionHandler;
